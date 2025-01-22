@@ -7,6 +7,28 @@ from torchvision.datasets import ImageFolder
 from src.features.build_features import get_transforms
 from src.config import dataset_folder, MODEL_PATH, BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE
 
+def export_model_to_onnx(model, model_name, export_path):
+    # Создаем путь для сохранения
+    os.makedirs(export_path, exist_ok=True)
+
+    # Путь для сохранения ONNX-модели
+    onnx_path = os.path.join(export_path, f"{model_name}.onnx")
+    
+    # Создаем фиктивный вход (размер изображения 224x224)
+    dummy_input = torch.randn(1, 3, 224, 224)
+    
+    # Экспортируем модель в ONNX
+    torch.onnx.export(
+        model, 
+        dummy_input, 
+        onnx_path, 
+        input_names=["input"], 
+        output_names=["output"], 
+        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}}
+    )
+    print(f"Модель успешно экспортирована в ONNX: {onnx_path}")
+
+
 def train_model(model_name='mobilenetv2_100'):
     # Подготовка данных
     train_dataset = ImageFolder(os.path.join(dataset_folder, 'train'), transform=get_transforms())
@@ -49,3 +71,6 @@ def train_model(model_name='mobilenetv2_100'):
     os.makedirs(MODEL_PATH, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(MODEL_PATH, f'{model_name}.pth'))
     print(f"Модель {model_name} сохранена.")
+
+    # Экспорт модели в ONNX
+    export_model_to_onnx(model, model_name, MODEL_PATH)

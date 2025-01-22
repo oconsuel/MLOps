@@ -1,42 +1,51 @@
+import os
 import torch
-from torch import nn
-from torchvision import models
+import timm
+from torch import nn, optim
+from torch.utils.data import DataLoader
+from torchvision.datasets import ImageFolder
+from src.features.build_features import get_transforms
+from src.config import dataset_folder, MODEL_PATH, BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE
 
-def train_model(train_loader, test_loader, num_epochs=10, device="cpu"):
-    """Обучение модели MobileNetV2."""
-    model = models.mobilenet_v2(pretrained=True)
-    model.classifier[1] = nn.Linear(model.last_channel, len(train_loader.dataset.classes))
-    model.to(device)
+def train_model(model_name='mobilenetv2_100'):
+    # Подготовка данных
+    train_dataset = ImageFolder(os.path.join(dataset_folder, 'train'), transform=get_transforms())
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
+    test_dataset = ImageFolder(os.path.join(dataset_folder, 'test'), transform=get_transforms())
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
+    # Загрузка модели MobileNet
+    model = timm.create_model(model_name, pretrained=True, num_classes=len(train_dataset.classes))
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.7)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    for epoch in range(num_epochs):
+    # Обучение модели
+    for epoch in range(NUM_EPOCHS):
         model.train()
         running_loss = 0.0
-        correct, total = 0, 0
-
         for images, labels in train_loader:
-            images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            _, predicted = outputs.max(1)
+        print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Loss: {running_loss/len(train_loader)}")
+
+    # Тестирование модели
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for images, labels in test_loader:
+            outputs = model(images)
+            _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
+            correct += (predicted == labels).sum().item()
+    print(f"Точность модели на тестовом наборе: {100 * correct / total}%")
 
-        scheduler.step()
-
-        accuracy = 100 * correct / total
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(train_loader):.4f}, Accuracy: {accuracy:.2f}%")
-    return model
-
-def export_to_onnx(model, output_path="model.onnx", input_size=(1, 3, 224, 224)):
-    """Экспорт модели в формат ONNX."""
-    dummy_input = torch.randn(*input_size)
-    torch.onnx.export(model, dummy_input, output_path, verbose=True)
-    print(f"Модель экспортирована в {output_path}")
+    # Сохранение модели
+    os.makedirs(MODEL_PATH, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(MODEL_PATH, f'{model_name}.pth'))
+    print(f"Модель {model_name} сохранена.")
